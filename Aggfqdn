@@ -1,0 +1,45 @@
+WITH metric_data AS (
+    SELECT
+        v.metric_name AS view_metric_name,
+        g.function_name AS function_name,
+        v.event_time AS timestamp,
+        g.event_time_grafana AS grafana_event_time,
+        SUM(v.value) AS view_value,  -- Aggregate view values across FQDNs
+        SUM(g.metric_value) AS grafana_value,  -- Aggregate Grafana values across FQDNs
+        -- Calculate match percentage based on the aggregated values
+        CASE
+            WHEN SUM(g.metric_value) = 0 AND SUM(v.value) = 0 THEN 100  -- Both are zero
+            WHEN SUM(g.metric_value) = 0 THEN NULL  -- Prevent division by zero
+            ELSE ABS(ROUND((SUM(v.value) / SUM(g.metric_value)) * 100, 2))  -- Percentage based on aggregated view_value
+        END AS match_percentage
+    FROM (
+        SELECT event_time, value, fqdn, metric_name, trans_dt FROM `vz-it-pr-gudv-dtwndo-0.aid_nwperf_aether_core_tbls.aether_amf_performance_derived`
+        UNION ALL
+        SELECT event_time, value, fqdn, metric_name, trans_dt FROM `vz-it-pr-gudv-dtwndo-0.aid_nwperf_aether_core_tbls.aether_smf_performance_derived`
+        UNION ALL
+        SELECT event_time, value, fqdn, metric_name, trans_dt FROM `vz-it-pr-gudv-dtwndo-0.aid_nwperf_aether_core_tbls.aether_upf_performance_derived`
+    ) v
+    LEFT JOIN (
+        SELECT TIMESTAMP_SUB(event_time, INTERVAL 1 HOUR) AS event_time_grafana, metric_name, fqdn, metric_value, function_name
+        FROM `vz-it-pr-gudv-dtwndo-0.aid_dtwin_core_uat_tbls.aether_grafana_all_kpi`
+    ) g
+    ON v.event_time = g.event_time_grafana  -- Adjust for 1-hour offset
+    AND LOWER(v.metric_name) = LOWER(g.metric_name)
+    AND v.fqdn = g.fqdn
+    WHERE v.trans_dt >= '2024-09-23' AND DATE(v.event_time) = '2024-09-23'
+    GROUP BY v.metric_name, g.function_name, v.event_time, g.event_time_grafana  -- Group by metric and function, and optionally by timestamp
+)
+
+SELECT
+    view_metric_name,
+    function_name,
+    SUM(view_value) AS total_view_value,  -- Sum of view values for each metric
+    SUM(grafana_value) AS total_grafana_value,  -- Sum of Grafana values for each metric
+    CASE
+        WHEN SUM(grafana_value) = 0 AND SUM(view_value) = 0 THEN 100  -- Both are zero
+        WHEN SUM(grafana_value) = 0 THEN NULL  -- Prevent division by zero
+        ELSE ABS(ROUND((SUM(view_value) / SUM(grafana_value)) * 100, 2))  -- Percentage based on aggregated values
+    END AS match_percentage
+FROM metric_data
+GROUP BY view_metric_name, function_name
+ORDER BY view_metric_name, function_name;
