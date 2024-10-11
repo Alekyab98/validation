@@ -1,0 +1,51 @@
+select view_metric_name, function_name, sum(view_value) as view_value, sum(grafana_value) as grafana_value, 
+CASE
+WHEN grafana_value = 0 AND view_value = 0 THEN 100 -- Both are zero
+WHEN grafana_value = 0 THEN NULL -- Prevent division by zero
+ELSE abs(ROUND((view_value / grafana_value) * 100, 2)) -- Percentage based on view_value
+END AS match_percentage
+from
+(select *,abs(100-match_percentage) as diff
+ from (SELECT
+v.event_time as timestamp,
+g.event_time_grafana as grafana_event_time,
+-- v.fqdn,
+v.metric_name as view_metric_name,
+g.function_name as function_name,
+v.value AS view_value,
+g.metric_value AS grafana_value,
+-- Match percentage based on view_value
+CASE
+WHEN g.metric_value = 0 AND v.value = 0 THEN 100 -- Both are zero
+WHEN g.metric_value = 0 THEN NULL -- Prevent division by zero
+ELSE abs(ROUND((v.value / g.metric_value) * 100, 2)) -- Percentage based on view_value
+END AS match_percentage
+FROM
+(SELECT event_time, value, fqdn, metric_name, trans_dt FROM `vz-it-pr-gudv-dtwndo-0.aid_nwperf_aether_core_tbls.aether_amf_performance_derived`
+UNION ALL
+SELECT  event_time, value, fqdn, metric_name, trans_dt FROM `vz-it-pr-gudv-dtwndo-0.aid_nwperf_aether_core_tbls.aether_smf_performance_derived`
+UNION ALL
+SELECT event_time, value,  fqdn, metric_name, trans_dt FROM `vz-it-pr-gudv-dtwndo-0.aid_nwperf_aether_core_tbls.aether_upf_performance_derived`) v
+
+LEFT JOIN
+(select TIMESTAMP_SUB(event_time, INTERVAL 1 HOUR) as event_time_grafana, metric_name, fqdn, metric_value, function_name from 
+`vz-it-pr-gudv-dtwndo-0.aid_dtwin_core_uat_tbls.aether_grafana_all_kpi`) g
+ON v.event_time = event_time_grafana -- Adjust for 1-hour offset
+AND lower(v.metric_name) = lower(g.metric_name)
+AND v.fqdn = g.fqdn
+WHERE
+v.trans_dt >= '2024-09-23'
+and
+date(v.event_time) = '2024-09-23'
+-- and
+-- lower(v.metric_name) = lower('registered_users')
+-- and 
+-- lower(g.function_name) = lower('amf')
+-- and
+-- g.fqdn = 'lenykscjvzwcamf-y-ec-x-000'
+ORDER BY
+v.event_time))
+group by all; --356013
+
+
+select distinct metric_name from vz-it-pr-gudv-dtwndo-0.aid_nwperf_aether_core_tbls.aether_upf_performance_derived where trans_dt is not null;
