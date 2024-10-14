@@ -1,0 +1,135 @@
+import csv
+import subprocess
+import json
+from datetime import datetime, timezone
+from urllib.parse import quote
+
+def load_api_keys(filename):
+    api_keys = {}
+    with open(filename, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                function_name, key = line.split(':', 1)
+                api_keys[function_name] = key.strip()
+    return api_keys
+
+def convert_epoch_to_timestamp(value):
+    return datetime.fromtimestamp(int(value), tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+
+def execute_curl_and_get_data(curl_command):
+    bash_command = f'bash -c "{curl_command}"'
+    result = subprocess.run(bash_command, shell=True, capture_output=True, text=True)
+
+    if not result.stdout:
+        print(f"Empty response from curl command.")
+        return None
+    
+    if result.returncode != 0:
+        print(f"Error executing curl command: {result.stderr}")
+        return None
+
+    return result.stdout
+
+def create_csv_for_kpi(kpi_name, query, function_name, encoded_api_key, priority_type):
+    encoded_query = quote(query)
+    
+    start_epoch = '1727049600'  #sept 7th, 2024
+    end_epoch = '1727132400'    
+    curl_command = (
+        f"curl --location --globoff 'https://us.aether.nss.vzwnet.com/gem/prometheus/api/v1/query_range?"
+        f"query={encoded_query}&start={start_epoch}&end={end_epoch}&step=60m'"
+        f" --header 'Authorization: Basic {encoded_api_key}'"
+    )
+
+    response_data = execute_curl_and_get_data(curl_command)
+    if response_data is None:
+        print(f"Skipping CSV creation for {kpi_name} due to empty or invalid response.")
+        return
+
+    try:
+        json_data = json.loads(response_data)
+    except json.JSONDecodeError as e:
+        print(f"Failed to parse JSON for {kpi_name}. Error: {e}")
+        print(f"Raw response was: {response_data}")
+        return
+
+    value_list = []
+
+    if json_data.get('status') == 'success' and 'data' in json_data and 'result' in json_data['data']:
+        for result in json_data['data']['result']:
+            if function_name in ['amf', 'smf']:
+                fqdn = result['metric'].get('kubernetes_namespace', 'unknown')
+            elif function_name == 'upf':
+                fqdn = result['metric'].get('localdn', 'unknown')
+            else:
+                fqdn = 'unknown'
+            for v in result['values']:
+                event_time = convert_epoch_to_timestamp(v[0])
+                metric_value = v[1]
+                value_list.append({
+                    "fqdn": fqdn,
+                    "metric_value": metric_value,
+                    "event_time": event_time,
+                    "metric_name": kpi_name,
+                    "function_name": function_name,
+                    "priority_type": priority_type  # Add priority type to the data
+                })
+    else:
+        print(f"Invalid data in the response for {kpi_name}.")
+        return
+
+    output_folder = r"C:\Users\billaal\Documents\python\All_metrics\CSVall_23sept"
+    csv_filename = f'{output_folder}/{function_name}_{kpi_name}.csv'
+
+    with open(csv_filename, mode='w', newline='') as file:
+        writer = csv.DictWriter(file, fieldnames=["function_name", "event_time", "fqdn", "metric_name", "metric_value", "priority_type"])
+        writer.writeheader()
+        writer.writerows(value_list)
+
+    print(f'CSV file created for {kpi_name}: {csv_filename}')
+
+def load_shortlisted_metrics(filename):
+    shortlisted_metrics = set()
+    with open(filename, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                shortlisted_metrics.add(line)
+    return shortlisted_metrics
+
+# Load API keys
+api_keys = load_api_keys('api_keys.txt')
+
+# Load shortlisted metrics
+shortlisted_metrics = load_shortlisted_metrics(r"C:\Users\billaal\Documents\python\All_metrics\shortlisted_kpis.csv")
+
+input_files = {
+    'AMF_query.txt': 'amf',
+    'SMF_query.txt': 'smf',
+    'UPF_query.txt': 'upf'
+}
+
+for input_file, function_name in input_files.items():
+    encoded_api_key = api_keys.get(function_name)
+    if not encoded_api_key:
+        print(f"Skipping {input_file} due to missing API key for {function_name}.")
+        continue
+
+    with open(input_file, 'r') as file:
+        for line in file:
+            line = line.strip()
+            if '|' in line:
+                try:
+                    metric_name, query = [part.strip() for part in line.split('|', 1)]
+                    
+                    # Determine priority type based on shortlisted metrics
+                    priority_type = 'P1' if metric_name in shortlisted_metrics else 'P2'
+                    
+                    create_csv_for_kpi(metric_name, query, function_name, encoded_api_key, priority_type)
+                except ValueError:
+                    print(f"Error unpacking line: {line}")
+            else:
+                print(f"Skipping line due to incorrect format: {line}")
+
+print("CSV files created for all KPIs.")
