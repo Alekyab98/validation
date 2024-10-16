@@ -1,0 +1,9 @@
+Here’s the update regarding our current progress:
+
+In the AMF function, we have made significant progress and are now able to match approximately 85% of the metrics with the Grafana data. For the 10 remaining metrics that are not fully aligning, some show minor discrepancies (e.g., differences of 1–2%) while others have variances of around 97–104%. However, there are about 4–5 metrics where we are seeing substantial differences, which we will need to investigate further. Overall, though, this marks a positive development in the AMF function.
+
+As for SMF and UPF, we are observing greater variability. The discrepancies appear to be metric-specific, with some metrics showing data for two types of network instances and others for up to four types (e.g., network instances, apps, FWA, mobile, and admin). We will need to address this once WAPNL is back.
+
+To summarize, we’ve made good progress on the AMF metrics, with 85% alignment achieved. Our focus now is on resolving the issues with the remaining five metrics. For SMF and UPF, further investigation is needed to understand the variations across different network instances.
+
+That’s the update for today.
